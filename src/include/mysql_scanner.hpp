@@ -14,6 +14,8 @@
 #include "mysql_statement.hpp"
 #include "mysql_types.hpp"
 #include "mysql_utils.hpp"
+#include "storage/mysql_predicate_analyzer.hpp"
+#include "storage/federation/cost_model.hpp"
 
 namespace duckdb {
 class MySQLTableEntry;
@@ -29,6 +31,15 @@ struct MySQLBindData : public FunctionData {
 	vector<LogicalType> types;
 	string limit;
 	MySQLResultStreaming streaming = MySQLResultStreaming::UNINITIALIZED;
+
+	bool use_predicate_analyzer = false;
+	FilterAnalysisResult filter_analysis;
+	ExecutionPlan execution_plan;
+	string partition_clause;
+
+	ExecutionPlanCacheKey adaptive_cache_key;
+	idx_t adaptive_cache_generation = 0;
+	idx_t adaptive_estimated_rows = 0;
 
 public:
 	unique_ptr<FunctionData> Copy() const override {

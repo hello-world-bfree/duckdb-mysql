@@ -92,10 +92,14 @@ TableFunction MySQLTableEntry::GetScanFunction(ClientContext &context, unique_pt
 		result->names.push_back(col.GetName());
 	}
 
+	Value filter_pushdown;
+	if (context.TryGetCurrentSetting("mysql_experimental_filter_pushdown", filter_pushdown)) {
+		result->use_predicate_analyzer = BooleanValue::Get(filter_pushdown);
+	}
+
 	bind_data = std::move(result);
 
 	auto function = MySQLScanFunction();
-	Value filter_pushdown;
 	if (context.TryGetCurrentSetting("mysql_experimental_filter_pushdown", filter_pushdown)) {
 		function.filter_pushdown = BooleanValue::Get(filter_pushdown);
 	}

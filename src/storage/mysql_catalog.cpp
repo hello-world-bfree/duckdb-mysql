@@ -10,22 +10,30 @@
 #include "mysql_connection.hpp"
 #include "mysql_scanner.hpp"
 #include "mysql_types.hpp"
+#include "mysql_utils.hpp"
 #include "storage/mysql_schema_entry.hpp"
 #include "storage/mysql_transaction.hpp"
 
 namespace duckdb {
 
 MySQLCatalog::MySQLCatalog(AttachedDatabase &db_p, string connection_string_p, string attach_path_p,
-                           AccessMode access_mode)
+                           AccessMode access_mode, idx_t pool_size, idx_t pool_timeout_ms,
+                           bool thread_local_cache_enabled)
     : Catalog(db_p), connection_string(std::move(connection_string_p)), attach_path(std::move(attach_path_p)),
       access_mode(access_mode), schemas(*this) {
 	MySQLConnectionParameters connection_params;
 	unordered_set<string> unused;
 	std::tie(connection_params, unused) = MySQLUtils::ParseConnectionParameters(connection_string);
 	default_schema = connection_params.db;
-	// try to connect
-	MySQLTypeConfig type_config;
+
 	auto connection = MySQLConnection::Open(type_config, connection_string, attach_path);
+
+	connection_pool =
+	    make_shared_ptr<MySQLConnectionPool>(connection_string, attach_path, type_config, pool_size, pool_timeout_ms);
+	connection_pool->SetThreadLocalCacheEnabled(thread_local_cache_enabled);
+
+	bool has_network_compression = (connection_params.client_flag & CLIENT_COMPRESS) != 0;
+	connection_pool->SetNetworkCompression(has_network_compression);
 }
 
 MySQLCatalog::~MySQLCatalog() = default;
@@ -523,6 +531,103 @@ WHERE table_schema = ${SCHEMA_NAME};
 
 void MySQLCatalog::ClearCache() {
 	schemas.ClearEntries();
+	{
+		lock_guard<mutex> lock(plan_cache_mutex_);
+		plan_cache_.clear();
+	}
+}
+
+MySQLConnectionPool &MySQLCatalog::GetConnectionPool() {
+	return *connection_pool;
+}
+
+MySQLTypeConfig MySQLCatalog::GetTypeConfig() const {
+	return type_config;
+}
+
+CachedExecutionPlan MySQLCatalog::GetCachedPlan(const ExecutionPlanCacheKey &key, bool &found) {
+	lock_guard<mutex> lock(plan_cache_mutex_);
+	auto it = plan_cache_.find(key);
+	if (it != plan_cache_.end()) {
+		it->second.hit_count++;
+		found = true;
+		return it->second;
+	}
+	found = false;
+	return {};
+}
+
+void MySQLCatalog::CachePlan(const ExecutionPlanCacheKey &key, ExecutionStrategy strategy, idx_t estimated_rows,
+                             const vector<idx_t> &pushed_filter_indices, const vector<idx_t> &local_filter_indices) {
+	lock_guard<mutex> lock(plan_cache_mutex_);
+
+	if (plan_cache_.size() > MAX_PLAN_CACHE_SIZE) {
+		auto oldest = plan_cache_.begin();
+		for (auto it = plan_cache_.begin(); it != plan_cache_.end(); ++it) {
+			if (it->second.cached_at < oldest->second.cached_at) {
+				oldest = it;
+			}
+		}
+		if (oldest != plan_cache_.end()) {
+			plan_cache_.erase(oldest);
+		}
+	}
+
+	CachedExecutionPlan cached;
+	cached.strategy = strategy;
+	cached.pushed_filter_indices = pushed_filter_indices;
+	cached.local_filter_indices = local_filter_indices;
+	cached.hit_count = 0;
+	cached.cached_at = std::chrono::steady_clock::now();
+	cached.generation = 0;
+	cached.estimated_rows = estimated_rows;
+	cached.smoothed_actual_rows = 0;
+	cached.execution_count = 0;
+	cached.last_feedback_at = std::chrono::steady_clock::time_point();
+	plan_cache_[key] = std::move(cached);
+}
+
+void MySQLCatalog::UpdatePlanFeedback(const ExecutionPlanCacheKey &key, idx_t estimated_rows, idx_t actual_rows,
+                                      idx_t expected_generation, double replan_threshold, idx_t cooldown_seconds) {
+	lock_guard<mutex> lock(plan_cache_mutex_);
+
+	auto it = plan_cache_.find(key);
+	if (it == plan_cache_.end()) {
+		return;
+	}
+
+	auto &plan = it->second;
+
+	if (plan.generation != expected_generation) {
+		return;
+	}
+
+	auto now = std::chrono::steady_clock::now();
+	auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - plan.last_feedback_at).count();
+	if (plan.last_feedback_at.time_since_epoch().count() > 0 && elapsed < static_cast<int64_t>(cooldown_seconds)) {
+		return;
+	}
+
+	if (estimated_rows < 1000) {
+		return;
+	}
+
+	if (plan.smoothed_actual_rows == 0) {
+		plan.smoothed_actual_rows = actual_rows;
+	} else {
+		plan.smoothed_actual_rows = static_cast<idx_t>(0.3 * static_cast<double>(actual_rows) +
+		                                               0.7 * static_cast<double>(plan.smoothed_actual_rows));
+	}
+	plan.execution_count++;
+	plan.last_feedback_at = now;
+	plan.generation++;
+
+	double ratio = static_cast<double>(plan.smoothed_actual_rows) /
+	               static_cast<double>(std::max(estimated_rows, static_cast<idx_t>(1)));
+
+	if ((ratio > replan_threshold || ratio < 1.0 / replan_threshold) && plan.execution_count >= 3) {
+		plan_cache_.erase(it);
+	}
 }
 
 } // namespace duckdb

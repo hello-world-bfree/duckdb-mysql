@@ -19,6 +19,27 @@ static void SetMySQLDebugQueryPrint(ClientContext &context, SetScope scope, Valu
 	MySQLConnection::DebugSetPrintQueries(BooleanValue::Get(parameter));
 }
 
+static void ValidatePoolSize(ClientContext &context, SetScope scope, Value &parameter) {
+	auto val = parameter.GetValue<uint64_t>();
+	if (val < 1) {
+		throw InvalidInputException("mysql_pool_size must be at least 1");
+	}
+}
+
+static void ValidateUnitInterval(ClientContext &context, SetScope scope, Value &parameter) {
+	auto val = parameter.GetValue<double>();
+	if (val < 0.0 || val > 1.0) {
+		throw InvalidInputException("Value must be between 0.0 and 1.0, got %f", val);
+	}
+}
+
+static void ValidatePositiveDouble(ClientContext &context, SetScope scope, Value &parameter) {
+	auto val = parameter.GetValue<double>();
+	if (val <= 0.0) {
+		throw InvalidInputException("Value must be greater than 0, got %f", val);
+	}
+}
+
 unique_ptr<BaseSecret> CreateMySQLSecretFunction(ClientContext &, CreateSecretInput &input) {
 	// apply any overridden settings
 	vector<string> prefix_paths;
@@ -42,8 +63,6 @@ unique_ptr<BaseSecret> CreateMySQLSecretFunction(ClientContext &, CreateSecretIn
 			result->secret_map["ssl_mode"] = named_param.second.ToString();
 		} else if (lower_name == "ssl_ca") {
 			result->secret_map["ssl_ca"] = named_param.second.ToString();
-		} else if (lower_name == "ssl_capath") {
-			result->secret_map["ssl_capath"] = named_param.second.ToString();
 		} else if (lower_name == "ssl_capath") {
 			result->secret_map["ssl_capath"] = named_param.second.ToString();
 		} else if (lower_name == "ssl_cert") {
@@ -132,7 +151,44 @@ static void LoadInternal(ExtensionLoader &loader) {
 	config.AddExtensionOption("mysql_enable_transactions",
 	                          "Whether to run 'START TRANSACTION'/'COMMIT'/'ROLLBACK' on MySQL connections",
 	                          LogicalType::BOOLEAN, Value::BOOLEAN(true), MySQLClearCacheFunction::ClearCacheOnSetting);
-
+	config.AddExtensionOption("mysql_pool_size", "Maximum number of connections per MySQL catalog (default: 4)",
+	                          LogicalType::UBIGINT, Value::UBIGINT(4), ValidatePoolSize);
+	config.AddExtensionOption("mysql_pool_timeout_ms",
+	                          "Timeout in milliseconds when waiting for a connection from the pool (default: 30000)",
+	                          LogicalType::UBIGINT, Value::UBIGINT(30000));
+	config.AddExtensionOption(
+	    "mysql_thread_local_cache",
+	    "Enable thread-local connection caching for faster same-thread connection reuse (default: true)",
+	    LogicalType::BOOLEAN, Value::BOOLEAN(true));
+	config.AddExtensionOption("mysql_compression_aware_costs",
+	                          "Apply compression ratios when estimating transfer costs (default: true)",
+	                          LogicalType::BOOLEAN, Value::BOOLEAN(true));
+	config.AddExtensionOption("mysql_compression_ratio",
+	                          "Compression ratio for transfer cost estimation (default: 0.7)", LogicalType::DOUBLE,
+	                          Value::DOUBLE(0.7), ValidateUnitInterval);
+	config.AddExtensionOption("mysql_hint_injection_enabled",
+	                          "Inject MySQL optimizer hints when statistics appear stale (default: false)",
+	                          LogicalType::BOOLEAN, Value::BOOLEAN(false));
+	config.AddExtensionOption("mysql_hint_staleness_threshold",
+	                          "Staleness score threshold for injecting optimizer hints (default: 0.5)",
+	                          LogicalType::DOUBLE, Value::DOUBLE(0.5), ValidateUnitInterval);
+	config.AddExtensionOption("mysql_adaptive_replan_enabled",
+	                          "Enable adaptive execution strategy based on actual vs estimated rows (default: true)",
+	                          LogicalType::BOOLEAN, Value::BOOLEAN(true));
+	config.AddExtensionOption("mysql_adaptive_replan_threshold", "Ratio threshold for triggering replan (default: 3.0)",
+	                          LogicalType::DOUBLE, Value::DOUBLE(3.0), ValidatePositiveDouble);
+	config.AddExtensionOption("mysql_adaptive_cooldown_seconds",
+	                          "Cooldown period between adaptive replan updates (default: 60)", LogicalType::UBIGINT,
+	                          Value::UBIGINT(60));
+	config.AddExtensionOption("mysql_explain_validation_enabled",
+	                          "Validate MySQL execution plans with EXPLAIN (default: false)", LogicalType::BOOLEAN,
+	                          Value::BOOLEAN(false));
+	config.AddExtensionOption("mysql_query_timeout_enabled",
+	                          "Add MAX_EXECUTION_TIME hint to MySQL queries for safety (default: true)",
+	                          LogicalType::BOOLEAN, Value::BOOLEAN(true));
+	config.AddExtensionOption("mysql_sql_buffer_result",
+	                          "Add SQL_BUFFER_RESULT for large result sets to release row locks faster (default: true)",
+	                          LogicalType::BOOLEAN, Value::BOOLEAN(true));
 	OptimizerExtension mysql_optimizer;
 	mysql_optimizer.optimize_function = MySQLOptimizer::Optimize;
 	config.optimizer_extensions.push_back(std::move(mysql_optimizer));

@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5.0)
+cmake_minimum_required(VERSION 3.10)
 set(TARGET_NAME mysql_scanner)
 project(${TARGET_NAME})
 
@@ -6,8 +6,12 @@ set(libmariadb_DIR ${CMAKE_CURRENT_LIST_DIR}/vcpkg_ports/libmariadb)
 find_package(libmariadb REQUIRED)
 set(EXTENSION_NAME ${TARGET_NAME}_extension)
 
-set(MYSQL_INCLUDE_DIR
-    ${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/include/mysql)
+# Set MYSQL_INCLUDE_DIR: prefer vcpkg path, fall back to what find_package set
+if(EXISTS "${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/include/mysql")
+    set(MYSQL_INCLUDE_DIR "${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/include/mysql")
+elseif(NOT MYSQL_INCLUDE_DIR)
+    message(FATAL_ERROR "MYSQL_INCLUDE_DIR not set. Check libmariadb-config.cmake")
+endif()
 include_directories(${MYSQL_INCLUDE_DIR})
 
 add_subdirectory(src)
