@@ -27,15 +27,22 @@ struct NetworkCalibration {
 	double network_compression_ratio = DEFAULT_COMPRESSION_RATIO;
 
 	double ByteTransferTime(idx_t bytes) const {
-		double transfer_seconds = static_cast<double>(bytes) / (bandwidth_mbps * MBPS_TO_BYTES_PER_SEC);
+		double effective_bw = std::max(bandwidth_mbps, 1.0);
+		double transfer_seconds = static_cast<double>(bytes) / (effective_bw * MBPS_TO_BYTES_PER_SEC);
 		return (latency_ms / 1000.0) + transfer_seconds;
 	}
 };
 
 class MySQLConnectionPool : public GenericConnectionPool<MySQLConnection> {
 public:
+	static idx_t DefaultPoolSize() noexcept {
+		unsigned int hw = std::thread::hardware_concurrency();
+		idx_t detected = (hw == 0) ? 4u : static_cast<idx_t>(hw);
+		return detected < 8u ? detected : 8u;
+	}
+
 	MySQLConnectionPool(string connection_string, string attach_path, MySQLTypeConfig type_config,
-	                    idx_t max_connections = DEFAULT_POOL_SIZE, idx_t timeout_ms = DEFAULT_POOL_TIMEOUT_MS);
+	                    idx_t max_connections = DefaultPoolSize(), idx_t timeout_ms = DEFAULT_POOL_TIMEOUT_MS);
 	~MySQLConnectionPool() override;
 
 	void UpdateTypeConfig(MySQLTypeConfig new_config);

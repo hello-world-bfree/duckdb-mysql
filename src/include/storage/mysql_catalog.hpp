@@ -20,7 +20,7 @@ class MySQLSchemaEntry;
 class MySQLCatalog : public Catalog {
 public:
 	explicit MySQLCatalog(AttachedDatabase &db_p, string connection_string, string attach_path, AccessMode access_mode,
-	                      idx_t pool_size = MySQLConnectionPool::DEFAULT_POOL_SIZE,
+	                      idx_t pool_size = MySQLConnectionPool::DefaultPoolSize(),
 	                      idx_t pool_timeout_ms = MySQLConnectionPool::DEFAULT_POOL_TIMEOUT_MS,
 	                      bool thread_local_cache_enabled = true);
 	~MySQLCatalog();

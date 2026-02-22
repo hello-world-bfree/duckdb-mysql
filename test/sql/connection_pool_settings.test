@@ -10,11 +10,11 @@ require-env MYSQL_TEST_DATABASE_AVAILABLE
 statement ok
 ATTACH 'host=localhost user=root port=0 database=mysql' AS s_default (TYPE MYSQL_SCANNER)
 
-# Test that pool settings exist and have correct defaults
+# Test that pool settings exist and have sensible defaults
 query I
-SELECT current_setting('mysql_pool_size')
+SELECT current_setting('mysql_pool_size')::INTEGER BETWEEN 1 AND 8
 ----
-4
+true
 
 query I
 SELECT current_setting('mysql_pool_timeout_ms')

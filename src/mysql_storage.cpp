@@ -30,7 +30,7 @@ static unique_ptr<Catalog> MySQLAttach(optional_ptr<StorageExtensionInfo> storag
 	auto connection_string = MySQLCatalog::GetConnectionString(context, attach_path, secret_name);
 
 	Value pool_size_value;
-	idx_t pool_size = MySQLConnectionPool::DEFAULT_POOL_SIZE;
+	idx_t pool_size = MySQLConnectionPool::DefaultPoolSize();
 	if (context.TryGetCurrentSetting("mysql_pool_size", pool_size_value)) {
 		pool_size = UBigIntValue::Get(pool_size_value);
 	}

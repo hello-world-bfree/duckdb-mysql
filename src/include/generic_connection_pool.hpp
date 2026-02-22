@@ -3,9 +3,6 @@
 //
 // generic_connection_pool.hpp
 //
-// Generic connection pool template — designed for extraction to a shared repo.
-// Backend-specific behavior is provided via 3 virtual hooks:
-//   CreateNewConnection(), CheckConnectionHealthy(), ResetConnection()
 //
 //===----------------------------------------------------------------------===//
 
@@ -33,7 +30,6 @@ public:
 	PooledConnection(shared_ptr<GenericConnectionPool<ConnectionT>> pool, unique_ptr<ConnectionT> connection);
 	~PooledConnection() noexcept;
 
-	// disable copy constructors
 	PooledConnection(const PooledConnection &) = delete;
 	PooledConnection &operator=(const PooledConnection &) = delete;
 
@@ -273,8 +269,8 @@ void GenericConnectionPool<ConnectionT>::Shutdown() {
 		available.clear();
 	}
 	pool_cv.notify_all();
-	// Other threads' TL caches are cleaned up by their own ThreadLocalConnectionCache
-	// destructors, which safely check owner.lock() returning nullptr after pool destruction.
+	//! Other threads' TL caches self-cleanup via ThreadLocalConnectionCache destructors
+	//! (owner.lock() returns nullptr after pool destruction).
 }
 
 template <typename ConnectionT>
@@ -550,11 +546,6 @@ void GenericConnectionPool<ConnectionT>::Return(unique_ptr<ConnectionT> conn) {
 	try {
 		ResetConnection(*conn);
 	} catch (...) {
-		Discard();
-		return;
-	}
-
-	if (!CheckConnectionHealthy(*conn)) {
 		Discard();
 		return;
 	}

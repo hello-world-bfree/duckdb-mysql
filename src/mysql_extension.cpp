@@ -1,6 +1,7 @@
 #define DUCKDB_BUILD_LOADABLE_EXTENSION
 #include "duckdb.hpp"
 
+#include "mysql_connection_pool.hpp"
 #include "mysql_scanner.hpp"
 #include "mysql_storage.hpp"
 #include "mysql_scanner_extension.hpp"
@@ -137,8 +138,10 @@ static void LoadInternal(ExtensionLoader &loader) {
 	config.AddExtensionOption("mysql_enable_transactions",
 	                          "Whether to run 'START TRANSACTION'/'COMMIT'/'ROLLBACK' on MySQL connections",
 	                          LogicalType::BOOLEAN, Value::BOOLEAN(true), MySQLClearCacheFunction::ClearCacheOnSetting);
-	config.AddExtensionOption("mysql_pool_size", "Maximum number of connections per MySQL catalog (default: 4)",
-	                          LogicalType::UBIGINT, Value::UBIGINT(4), ValidatePoolSize);
+	config.AddExtensionOption("mysql_pool_size",
+	                          "Maximum number of connections per MySQL catalog (default: min(cpu_count, 8))",
+	                          LogicalType::UBIGINT, Value::UBIGINT(MySQLConnectionPool::DefaultPoolSize()),
+	                          ValidatePoolSize);
 	config.AddExtensionOption("mysql_pool_timeout_ms",
 	                          "Timeout in milliseconds when waiting for a connection from the pool (default: 30000)",
 	                          LogicalType::UBIGINT, Value::UBIGINT(30000));
