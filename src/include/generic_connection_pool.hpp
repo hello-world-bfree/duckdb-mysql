@@ -58,9 +58,8 @@ struct ThreadLocalConnectionCache {
 	unique_ptr<ConnectionT> connection;
 	weak_ptr<GenericConnectionPool<ConnectionT>> owner;
 	bool available = false;
-	std::thread::id thread_id;
 
-	ThreadLocalConnectionCache() : thread_id(std::this_thread::get_id()) {
+	ThreadLocalConnectionCache() {
 	}
 
 	~ThreadLocalConnectionCache();
@@ -105,6 +104,9 @@ protected:
 	virtual unique_ptr<ConnectionT> CreateNewConnection() = 0;
 	virtual bool CheckConnectionHealthy(ConnectionT &conn) = 0;
 	virtual void ResetConnection(ConnectionT &conn) = 0;
+	virtual bool TryRecoverConnection(ConnectionT &conn) {
+		return false;
+	}
 
 	//! Calls fn(conn) for each idle connection while holding pool_lock.
 	//! fn MUST NOT call any pool method that acquires pool_lock.
@@ -539,8 +541,10 @@ void GenericConnectionPool<ConnectionT>::Return(unique_ptr<ConnectionT> conn) {
 	}
 
 	if (!CheckConnectionHealthy(*conn)) {
-		Discard();
-		return;
+		if (!TryRecoverConnection(*conn)) {
+			Discard();
+			return;
+		}
 	}
 
 	try {
@@ -586,9 +590,15 @@ void GenericConnectionPool<ConnectionT>::Discard() {
 
 template <typename ConnectionT>
 void GenericConnectionPool<ConnectionT>::SetMaxConnections(idx_t new_max) {
+	std::deque<unique_ptr<ConnectionT>> to_evict;
 	{
 		lock_guard<mutex> lock(pool_lock);
 		max_connections = new_max;
+		while (!available.empty() && total_connections > max_connections) {
+			to_evict.push_back(std::move(available.back()));
+			available.pop_back();
+			total_connections--;
+		}
 	}
 	pool_cv.notify_all();
 }
