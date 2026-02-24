@@ -27,6 +27,13 @@ static void ValidatePoolSize(ClientContext &context, SetScope scope, Value &para
 	}
 }
 
+static void ValidatePoolAcquireMode(ClientContext &context, SetScope scope, Value &parameter) {
+	auto mode = StringUtil::Lower(parameter.ToString());
+	if (mode != "force" && mode != "wait" && mode != "try") {
+		throw InvalidInputException("mysql_pool_acquire_mode must be 'force', 'wait', or 'try'");
+	}
+}
+
 unique_ptr<BaseSecret> CreateMySQLSecretFunction(ClientContext &, CreateSecretInput &input) {
 	// apply any overridden settings
 	vector<string> prefix_paths;
@@ -144,6 +151,11 @@ static void LoadInternal(ExtensionLoader &loader) {
 	config.AddExtensionOption("mysql_pool_timeout_ms",
 	                          "Timeout in milliseconds when waiting for a connection from the pool (default: 30000)",
 	                          LogicalType::UBIGINT, Value::UBIGINT(30000));
+	config.AddExtensionOption(
+	    "mysql_pool_acquire_mode",
+	    "How to acquire connections from the pool: 'force' (always connect, ignore pool limit), "
+	    "'wait' (block until available), 'try' (fail immediately if unavailable) (default: force)",
+	    LogicalType::VARCHAR, Value("force"), ValidatePoolAcquireMode);
 	config.AddExtensionOption(
 	    "mysql_thread_local_cache",
 	    "Enable thread-local connection caching for faster same-thread connection reuse (default: true)",
