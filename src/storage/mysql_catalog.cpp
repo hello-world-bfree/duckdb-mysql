@@ -30,7 +30,7 @@ MySQLCatalog::MySQLCatalog(AttachedDatabase &db_p, string connection_string_p, s
 	    make_shared_ptr<MySQLConnectionPool>(connection_string, attach_path, type_config, pool_size, pool_timeout_ms);
 	connection_pool->SetThreadLocalCacheEnabled(thread_local_cache_enabled);
 
-	auto pooled = connection_pool->Acquire();
+	auto pooled = connection_pool->ForceAcquire();
 	(void)pooled;
 }
 

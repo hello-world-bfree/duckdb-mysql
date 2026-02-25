@@ -21,9 +21,16 @@ static void SetMySQLDebugQueryPrint(ClientContext &context, SetScope scope, Valu
 }
 
 static void ValidatePoolSize(ClientContext &context, SetScope scope, Value &parameter) {
-	auto val = parameter.GetValue<uint64_t>();
-	if (val < 1) {
-		throw InvalidInputException("mysql_pool_size must be at least 1");
+	auto new_size = parameter.GetValue<uint64_t>();
+	if (new_size == 0) {
+		Value acquire_mode_val;
+		if (context.TryGetCurrentSetting("mysql_pool_acquire_mode", acquire_mode_val)) {
+			auto mode = StringUtil::Lower(acquire_mode_val.ToString());
+			if (mode != "force") {
+				throw InvalidInputException(
+				    "mysql_pool_size=0 (pooling disabled) requires mysql_pool_acquire_mode='force'");
+			}
+		}
 	}
 }
 
@@ -31,6 +38,16 @@ static void ValidatePoolAcquireMode(ClientContext &context, SetScope scope, Valu
 	auto mode = StringUtil::Lower(parameter.ToString());
 	if (mode != "force" && mode != "wait" && mode != "try") {
 		throw InvalidInputException("mysql_pool_acquire_mode must be 'force', 'wait', or 'try'");
+	}
+	if (mode != "force") {
+		Value pool_size_val;
+		if (context.TryGetCurrentSetting("mysql_pool_size", pool_size_val)) {
+			auto pool_size = pool_size_val.GetValue<uint64_t>();
+			if (pool_size == 0) {
+				throw InvalidInputException(
+				    "mysql_pool_acquire_mode='%s' requires mysql_pool_size > 0 (pooling enabled)", mode);
+			}
+		}
 	}
 }
 
