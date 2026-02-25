@@ -6,11 +6,17 @@ require mysql_scanner
 
 require-env MYSQL_TEST_DATABASE_AVAILABLE
 
+# Attach first to ensure extension settings are fully registered
+statement ok
+ATTACH 'host=localhost user=root port=0 database=mysqlscanner' AS warmup (TYPE MYSQL_SCANNER)
+
+statement ok
+DETACH warmup
+
 # -------------------------------------------------------
 # Test 1: Cross-validation — pool_size=0 requires force mode
 # -------------------------------------------------------
 
-# Default acquire mode is 'force', so setting pool_size=0 should succeed
 statement ok
 SET mysql_pool_size = 0
 
