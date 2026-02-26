@@ -1,6 +1,7 @@
 #define DUCKDB_BUILD_LOADABLE_EXTENSION
 #include "duckdb.hpp"
 
+#include "mysql_connection_pool.hpp"
 #include "mysql_scanner.hpp"
 #include "mysql_storage.hpp"
 #include "mysql_scanner_extension.hpp"
@@ -17,6 +18,37 @@ using namespace duckdb;
 
 static void SetMySQLDebugQueryPrint(ClientContext &context, SetScope scope, Value &parameter) {
 	MySQLConnection::DebugSetPrintQueries(BooleanValue::Get(parameter));
+}
+
+static void ValidatePoolSize(ClientContext &context, SetScope scope, Value &parameter) {
+	auto new_size = parameter.GetValue<uint64_t>();
+	if (new_size == 0) {
+		Value acquire_mode_val;
+		if (context.TryGetCurrentSetting("mysql_pool_acquire_mode", acquire_mode_val)) {
+			auto mode = StringUtil::Lower(acquire_mode_val.ToString());
+			if (mode != "force") {
+				throw InvalidInputException(
+				    "mysql_pool_size=0 (pooling disabled) requires mysql_pool_acquire_mode='force'");
+			}
+		}
+	}
+}
+
+static void ValidatePoolAcquireMode(ClientContext &context, SetScope scope, Value &parameter) {
+	auto mode = StringUtil::Lower(parameter.ToString());
+	if (mode != "force" && mode != "wait" && mode != "try") {
+		throw InvalidInputException("mysql_pool_acquire_mode must be 'force', 'wait', or 'try'");
+	}
+	if (mode != "force") {
+		Value pool_size_val;
+		if (context.TryGetCurrentSetting("mysql_pool_size", pool_size_val)) {
+			auto pool_size = pool_size_val.GetValue<uint64_t>();
+			if (pool_size == 0) {
+				throw InvalidInputException(
+				    "mysql_pool_acquire_mode='%s' requires mysql_pool_size > 0 (pooling enabled)", mode);
+			}
+		}
+	}
 }
 
 unique_ptr<BaseSecret> CreateMySQLSecretFunction(ClientContext &, CreateSecretInput &input) {
@@ -42,8 +74,6 @@ unique_ptr<BaseSecret> CreateMySQLSecretFunction(ClientContext &, CreateSecretIn
 			result->secret_map["ssl_mode"] = named_param.second.ToString();
 		} else if (lower_name == "ssl_ca") {
 			result->secret_map["ssl_ca"] = named_param.second.ToString();
-		} else if (lower_name == "ssl_capath") {
-			result->secret_map["ssl_capath"] = named_param.second.ToString();
 		} else if (lower_name == "ssl_capath") {
 			result->secret_map["ssl_capath"] = named_param.second.ToString();
 		} else if (lower_name == "ssl_cert") {
@@ -132,6 +162,21 @@ static void LoadInternal(ExtensionLoader &loader) {
 	config.AddExtensionOption("mysql_enable_transactions",
 	                          "Whether to run 'START TRANSACTION'/'COMMIT'/'ROLLBACK' on MySQL connections",
 	                          LogicalType::BOOLEAN, Value::BOOLEAN(true), MySQLClearCacheFunction::ClearCacheOnSetting);
+	config.AddExtensionOption(
+	    "mysql_pool_size", "Maximum number of connections per MySQL catalog (default: min(cpu_count, 8))",
+	    LogicalType::UBIGINT, Value::UBIGINT(MySQLConnectionPool::DefaultPoolSize()), ValidatePoolSize);
+	config.AddExtensionOption("mysql_pool_timeout_ms",
+	                          "Timeout in milliseconds when waiting for a connection from the pool (default: 30000)",
+	                          LogicalType::UBIGINT, Value::UBIGINT(30000));
+	config.AddExtensionOption(
+	    "mysql_pool_acquire_mode",
+	    "How to acquire connections from the pool: 'force' (always connect, ignore pool limit), "
+	    "'wait' (block until available), 'try' (fail immediately if unavailable) (default: force)",
+	    LogicalType::VARCHAR, Value("force"), ValidatePoolAcquireMode);
+	config.AddExtensionOption(
+	    "mysql_thread_local_cache",
+	    "Enable thread-local connection caching for faster same-thread connection reuse (default: true)",
+	    LogicalType::BOOLEAN, Value::BOOLEAN(true));
 
 	OptimizerExtension mysql_optimizer;
 	mysql_optimizer.optimize_function = MySQLOptimizer::Optimize;

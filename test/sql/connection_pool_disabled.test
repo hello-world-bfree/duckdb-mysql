@@ -1,0 +1,185 @@
+# name: test/sql/connection_pool_disabled.test
+# description: Test pool_size=0 (pooling disabled) creates fresh connections and cross-validation
+# group: [sql]
+
+require mysql_scanner
+
+require-env MYSQL_TEST_DATABASE_AVAILABLE
+
+# Attach first to ensure extension settings are fully registered
+statement ok
+ATTACH 'host=localhost user=root port=0 database=mysqlscanner' AS warmup (TYPE MYSQL_SCANNER)
+
+statement ok
+DETACH warmup
+
+# -------------------------------------------------------
+# Test 1: Cross-validation — pool_size=0 requires force mode
+# -------------------------------------------------------
+
+statement ok
+SET mysql_pool_size = 0
+
+# Changing to 'wait' while pool_size=0 should fail
+statement error
+SET mysql_pool_acquire_mode = 'wait'
+----
+requires mysql_pool_size > 0
+
+# Changing to 'try' while pool_size=0 should fail
+statement error
+SET mysql_pool_acquire_mode = 'try'
+----
+requires mysql_pool_size > 0
+
+# 'force' should still work
+statement ok
+SET mysql_pool_acquire_mode = 'force'
+
+# Reset for next test
+statement ok
+SET mysql_pool_size = 4
+
+# Now test the other direction: set non-force mode first, then try pool_size=0
+statement ok
+SET mysql_pool_acquire_mode = 'wait'
+
+statement error
+SET mysql_pool_size = 0
+----
+requires mysql_pool_acquire_mode='force'
+
+# Reset
+statement ok
+SET mysql_pool_acquire_mode = 'force'
+
+statement ok
+SET mysql_pool_size = 4
+
+# -------------------------------------------------------
+# Test 2: pool_size=0 creates a fresh connection each time
+# -------------------------------------------------------
+
+# First, establish baseline: with pooling enabled, connection IDs should be reused
+statement ok
+ATTACH 'host=localhost user=root port=0 database=mysqlscanner' AS pooled (TYPE MYSQL_SCANNER)
+
+# Get connection ID from first transaction
+query I
+SELECT * FROM mysql_query('pooled', 'SELECT CONNECTION_ID()')
+----
+<REGEX>:\d+
+
+statement ok
+DETACH pooled
+
+# Now test with pooling disabled
+statement ok
+SET mysql_pool_size = 0
+
+statement ok
+SET mysql_pool_acquire_mode = 'force'
+
+statement ok
+ATTACH 'host=localhost user=root port=0 database=mysqlscanner' AS nop (TYPE MYSQL_SCANNER)
+
+# Basic queries should work (fresh connection each transaction)
+statement ok
+DROP TABLE IF EXISTS nop.pool_disabled_test
+
+statement ok
+CREATE TABLE nop.pool_disabled_test(id INTEGER PRIMARY KEY, val VARCHAR(50))
+
+statement ok
+INSERT INTO nop.pool_disabled_test VALUES (1, 'hello')
+
+query II
+SELECT * FROM nop.pool_disabled_test
+----
+1	hello
+
+statement ok
+DROP TABLE nop.pool_disabled_test
+
+statement ok
+DETACH nop
+
+# Reset
+statement ok
+SET mysql_pool_size = 4
+
+# -------------------------------------------------------
+# Test 3: ForceAcquire with pool_size=0 does NOT reuse connections
+# Compare against pooled behavior that DOES reuse connections
+# -------------------------------------------------------
+
+# With pooling enabled (default pool_size=4), run two consecutive transactions
+# and capture their MySQL CONNECTION_ID(). They should match (same connection reused).
+statement ok
+ATTACH 'host=localhost user=root port=0 database=mysqlscanner' AS reuse_test (TYPE MYSQL_SCANNER)
+
+# Create a temp table to store connection IDs from separate transactions
+statement ok
+CALL mysql_execute('reuse_test', 'DROP TABLE IF EXISTS conn_id_log')
+
+statement ok
+CALL mysql_execute('reuse_test', 'CREATE TABLE conn_id_log(txn_label VARCHAR(20), conn_id BIGINT)')
+
+statement ok
+CALL mysql_clear_cache()
+
+# Transaction 1: log connection ID
+statement ok
+INSERT INTO reuse_test.conn_id_log SELECT 'pooled_tx1', * FROM mysql_query('reuse_test', 'SELECT CONNECTION_ID()')
+
+# Transaction 2: log connection ID
+statement ok
+INSERT INTO reuse_test.conn_id_log SELECT 'pooled_tx2', * FROM mysql_query('reuse_test', 'SELECT CONNECTION_ID()')
+
+# With pooling, both transactions should reuse the same MySQL connection
+query I
+SELECT COUNT(DISTINCT conn_id) FROM reuse_test.conn_id_log WHERE txn_label LIKE 'pooled%'
+----
+1
+
+# Clean up for next phase
+statement ok
+CALL mysql_execute('reuse_test', 'TRUNCATE TABLE conn_id_log')
+
+statement ok
+DETACH reuse_test
+
+# Now with pooling disabled
+statement ok
+SET mysql_pool_size = 0
+
+statement ok
+ATTACH 'host=localhost user=root port=0 database=mysqlscanner' AS nop2 (TYPE MYSQL_SCANNER)
+
+# Transaction 1: log connection ID
+statement ok
+INSERT INTO nop2.conn_id_log SELECT 'nop_tx1', * FROM mysql_query('nop2', 'SELECT CONNECTION_ID()')
+
+# Transaction 2: log connection ID
+statement ok
+INSERT INTO nop2.conn_id_log SELECT 'nop_tx2', * FROM mysql_query('nop2', 'SELECT CONNECTION_ID()')
+
+# With pooling disabled, each transaction should get a DIFFERENT MySQL connection
+query I
+SELECT COUNT(DISTINCT conn_id) FROM nop2.conn_id_log WHERE txn_label LIKE 'nop%'
+----
+2
+
+# Cleanup
+statement ok
+CALL mysql_execute('nop2', 'DROP TABLE conn_id_log')
+
+statement ok
+DETACH nop2
+
+# Reset
+statement ok
+SET mysql_pool_size = 4
+
+statement ok
+SET mysql_pool_acquire_mode = 'force'

@@ -3,13 +3,13 @@
 //
 // storage/mysql_transaction.hpp
 //
-//
 //===----------------------------------------------------------------------===//
 
 #pragma once
 
 #include "duckdb/transaction/transaction.hpp"
 #include "mysql_connection.hpp"
+#include "mysql_connection_pool.hpp"
 
 namespace duckdb {
 class MySQLCatalog;
@@ -17,6 +17,8 @@ class MySQLSchemaEntry;
 class MySQLTableEntry;
 
 enum class MySQLTransactionState { TRANSACTION_NOT_YET_STARTED, TRANSACTION_STARTED, TRANSACTION_FINISHED };
+
+enum class MySQLPoolAcquireMode : uint8_t { FORCE, WAIT, TRY };
 
 class MySQLTransaction : public Transaction {
 public:
@@ -35,10 +37,15 @@ public:
 	}
 
 private:
-	MySQLConnection connection;
+	void EnsureConnection();
+
+	MySQLCatalog &catalog;
+	PooledConnection<MySQLConnection> pooled_connection;
 	bool transactions_enabled = true;
-	MySQLTransactionState transaction_state;
+	MySQLTransactionState transaction_state = MySQLTransactionState::TRANSACTION_NOT_YET_STARTED;
 	AccessMode access_mode;
+	string time_zone;
+	MySQLPoolAcquireMode acquire_mode = MySQLPoolAcquireMode::FORCE;
 };
 
 } // namespace duckdb
