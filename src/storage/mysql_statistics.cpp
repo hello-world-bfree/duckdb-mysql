@@ -38,13 +38,12 @@ optional_ptr<const MySQLIndexInfo> MySQLTableStats::FindBestIndex(const vector<s
 	optional_ptr<const MySQLIndexInfo> best_match = nullptr;
 	idx_t best_match_columns = 0;
 
+	case_insensitive_set_t required_set(required_columns.begin(), required_columns.end());
+
 	for (const auto &index : indexes) {
-		if (!index.IsLeadingColumn(required_columns[0])) {
-			continue;
-		}
 		idx_t matched_columns = 0;
-		for (idx_t i = 0; i < required_columns.size() && i < index.columns.size(); i++) {
-			if (StringUtil::CIEquals(required_columns[i], index.columns[i])) {
+		for (const auto &idx_col : index.columns) {
+			if (required_set.count(idx_col)) {
 				matched_columns++;
 			} else {
 				break;
@@ -383,7 +382,7 @@ double MySQLStatisticsCollector::ComputeStalenessScore(const MySQLTableStats &st
 		} else if (days > 7) {
 			score += 0.1;
 		}
-	} else {
+	} else if (!stats.is_partitioned) {
 		score += 0.2;
 	}
 
@@ -392,7 +391,8 @@ double MySQLStatisticsCollector::ComputeStalenessScore(const MySQLTableStats &st
 	}
 
 	for (const auto &idx : stats.indexes) {
-		if (idx.is_primary && idx.cardinality > stats.estimated_row_count * 3 / 2) {
+		if (idx.is_primary && idx.cardinality != DConstants::INVALID_INDEX &&
+		    idx.cardinality > stats.estimated_row_count + stats.estimated_row_count / 2) {
 			score += 0.3;
 			break;
 		}
@@ -407,8 +407,8 @@ void MySQLStatisticsCollector::DetectVersion() {
 	}
 	version_detected_ = true;
 
-	auto result = connection_.get().Query("SELECT @@version AS mysql_version",
-	                                      MySQLResultStreaming::FORCE_MATERIALIZATION);
+	auto result =
+	    connection_.get().Query("SELECT @@version AS mysql_version", MySQLResultStreaming::FORCE_MATERIALIZATION);
 
 	if (result->Exhausted()) {
 		return;
@@ -588,7 +588,6 @@ void MySQLStatisticsCollector::FetchTableMetadata(const string &schema, const st
 		stats.update_time_epoch_us = Timestamp::GetEpochMicroSeconds(ts);
 		stats.has_update_time = true;
 	}
-
 }
 
 void MySQLStatisticsCollector::FetchInnoDBStats(const string &schema, const string &table, MySQLTableStats &stats) {
@@ -1057,10 +1056,9 @@ MySQLStatisticsCollector::MySQLCostConstants MySQLStatisticsCollector::FetchMySQ
 	}
 
 	try {
-		auto bp_result = connection_.get().Query(
-		    "SHOW GLOBAL STATUS WHERE variable_name IN "
-		    "('Innodb_buffer_pool_read_requests', 'Innodb_buffer_pool_reads')",
-		    MySQLResultStreaming::FORCE_MATERIALIZATION);
+		auto bp_result = connection_.get().Query("SHOW GLOBAL STATUS WHERE variable_name IN "
+		                                         "('Innodb_buffer_pool_read_requests', 'Innodb_buffer_pool_reads')",
+		                                         MySQLResultStreaming::FORCE_MATERIALIZATION);
 		idx_t read_requests = 0, reads = 0;
 		while (!bp_result->Exhausted()) {
 			auto &chunk = bp_result->NextChunk();
@@ -1082,10 +1080,8 @@ MySQLStatisticsCollector::MySQLCostConstants MySQLStatisticsCollector::FetchMySQ
 		}
 		static constexpr idx_t MIN_READ_REQUESTS = 1000;
 		if (read_requests >= MIN_READ_REQUESTS && reads <= read_requests) {
-			constants.buffer_pool_hit_rate =
-			    1.0 - (static_cast<double>(reads) / static_cast<double>(read_requests));
-			constants.buffer_pool_hit_rate =
-			    std::max(0.0, std::min(1.0, constants.buffer_pool_hit_rate));
+			constants.buffer_pool_hit_rate = 1.0 - (static_cast<double>(reads) / static_cast<double>(read_requests));
+			constants.buffer_pool_hit_rate = std::max(0.0, std::min(1.0, constants.buffer_pool_hit_rate));
 		}
 	} catch (const std::exception &) {
 	}

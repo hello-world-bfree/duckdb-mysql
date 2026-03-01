@@ -196,13 +196,6 @@ static void LoadInternal(ExtensionLoader &loader) {
 	config.AddExtensionOption("mysql_push_threshold_no_index",
 	                          "Selectivity threshold for pushing filters without index support (default: 0.3)",
 	                          LogicalType::DOUBLE, Value::DOUBLE(0.3), ValidateUnitInterval);
-	config.AddExtensionOption("mysql_hint_injection_enabled",
-	                          "Inject MySQL optimizer hints when statistics appear stale (default: false)",
-	                          LogicalType::BOOLEAN, Value::BOOLEAN(false));
-	config.AddExtensionOption("mysql_hint_staleness_threshold",
-	                          "Staleness score threshold for injecting optimizer hints (default: 0.5)",
-	                          LogicalType::DOUBLE, Value::DOUBLE(0.5), ValidateUnitInterval);
-
 	OptimizerExtension mysql_optimizer;
 	mysql_optimizer.optimize_function = MySQLOptimizer::Optimize;
 	OptimizerExtension::Register(config, std::move(mysql_optimizer));

@@ -151,8 +151,8 @@ OperationCost DefaultCostModel::CalculateHybridCost(const MySQLTableStats &stats
 			if (pushed_filter_count <= 2) {
 				pushed_selectivity *= analysis.estimated_selectivity;
 			} else {
-				pushed_selectivity *= std::pow(analysis.estimated_selectivity,
-				                               PredicateAnalyzer::SELECTIVITY_DAMPENING_EXPONENT);
+				pushed_selectivity *=
+				    std::pow(analysis.estimated_selectivity, PredicateAnalyzer::SELECTIVITY_DAMPENING_EXPONENT);
 			}
 		} else {
 			local_indices.push_back(i);
