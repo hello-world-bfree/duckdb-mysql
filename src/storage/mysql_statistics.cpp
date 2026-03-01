@@ -198,7 +198,7 @@ vector<string> MySQLPartitionInfo::GetMatchingPartitions(const Value &filter_val
 			if (!is_maxvalue) {
 				if (type == MySQLPartitionType::RANGE) {
 					try {
-						bound = Value(std::stoll(part.description));
+						bound = Value(static_cast<int64_t>(std::stoll(part.description)));
 					} catch (const std::exception &) {
 						return {};
 					}
